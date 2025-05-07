@@ -117,8 +117,7 @@ ProductivityAnalyzer/
 │   └── results.html       # Analysis results page
 ├── Uploads/               # Storage for uploaded files
 ├── Vid_1.mp4              # Sample video file
-├── alignment_report.docx  # Sample report
-└── .venv/                 # Virtual environment
+
 ```
 
 ## Dependencies

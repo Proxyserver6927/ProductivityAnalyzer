@@ -5,7 +5,7 @@ Created on May 07, 2025
 @author: Adity
 """
 
-from flask import Flask, render_template, request, send_file
+from flask import Flask, render_template, request, send_file, redirect, url_for, session
 import moviepy.editor as mp
 import whisper
 import os
@@ -18,6 +18,7 @@ from docx.shared import RGBColor
 from werkzeug.utils import secure_filename
 import tempfile
 import uuid
+from datetime import datetime
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'Uploads'
@@ -27,6 +28,11 @@ app.secret_key = 'your-secret-key-here'  # Change this in production
 # Load models globally
 model_whisper = whisper.load_model("medium")
 model_st = SentenceTransformer('all-mpnet-base-v2')
+
+# Store temporary report paths for download
+report_paths = {}
+# Store analysis results
+analysis_results = {}
 
 # Helper Functions
 def extract_audio_from_video(video_path, audio_path):
@@ -136,23 +142,35 @@ def process_input(input_type, file_path, agenda, request_id):
     aligned = [(s, sc) for s, sc in zip(sentences, scores) if sc >= threshold]
     non_aligned = [(s, sc) for s, sc in zip(sentences, scores) if sc < threshold]
     
+    # Calculate alignment percentage
+    alignment_percent = (len(aligned) / (len(aligned) + len(non_aligned))) * 100 if (len(aligned) + len(non_aligned)) > 0 else 0
+    
     report_content = create_report(agenda, aligned, non_aligned, threshold)
     report_path = os.path.join(temp_dir, f"{request_id}_report.docx")
     save_docx_report(report_content, report_path)
-    return report_path
+    return report_path, aligned, non_aligned, threshold, alignment_percent
 
-@app.route('/', methods=['GET', 'POST'])
-def index():
+# Store some analysis results for the dashboard
+recent_analyses = []
+
+@app.route('/')
+def dashboard():
+    """Render the main dashboard page"""
+    return render_template('dashboard.html', analyses=recent_analyses)
+
+@app.route('/analyze', methods=['GET', 'POST'])
+def analyze():
+    """Handle the analysis form page"""
     if request.method == 'POST':
         input_type = request.form.get('input_type')
         agenda = request.form.get('agenda', '').strip()
         if 'file' not in request.files:
-            return render_template('index.html', error="No file uploaded")
+            return render_template('analyze.html', error="No file uploaded")
         file = request.files['file']
         if file.filename == '':
-            return render_template('index.html', error="No selected file")
+            return render_template('analyze.html', error="No selected file")
         if not agenda:
-            return render_template('index.html', error="Please enter an agenda topic")
+            return render_template('analyze.html', error="Please enter an agenda topic")
         
         # Validate file extension
         allowed_extensions = {
@@ -162,7 +180,7 @@ def index():
         }
         ext = os.path.splitext(file.filename)[1].lower()
         if input_type not in allowed_extensions or ext not in allowed_extensions[input_type]:
-            return render_template('index.html', error=f"Invalid file type for {input_type}")
+            return render_template('analyze.html', error=f"Invalid file type for {input_type}")
         
         # Save the file
         filename = secure_filename(file.filename)
@@ -171,22 +189,74 @@ def index():
         
         try:
             request_id = str(uuid.uuid4())
-            report_path = process_input(input_type, file_path, agenda, request_id)
-            return send_file(
-                report_path,
-                as_attachment=True,
-                download_name="alignment_report.docx",
-                mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
+            report_path, aligned, non_aligned, threshold, alignment_percent = process_input(input_type, file_path, agenda, request_id)
+            
+            # Store analysis summary for dashboard
+            if len(recent_analyses) >= 5:  # Keep only last 5 analyses
+                recent_analyses.pop(0)
+                
+            recent_analyses.append({
+                'id': request_id,
+                'filename': filename,
+                'agenda': agenda,
+                'alignment_percent': alignment_percent,
+                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'type': input_type
+            })
+            
+            # Store report path for download
+            report_paths[request_id] = report_path
+            
+            # Store analysis results
+            analysis_results[request_id] = {
+                'aligned': aligned,
+                'non_aligned': non_aligned,
+                'threshold': threshold,
+                'alignment_percent': alignment_percent,
+                'agenda': agenda,
+                'filename': filename
+            }
+            
+            # Redirect to results page
+            return redirect(url_for('show_results', analysis_id=request_id))
         except Exception as e:
-            return render_template('index.html', error=str(e))
+            return render_template('analyze.html', error=str(e))
         finally:
             # Cleanup uploaded file
             if os.path.exists(file_path):
                 os.remove(file_path)
-            # The report file will be deleted by the OS since it's in temp_dir
     
-    return render_template('index.html')
+    return render_template('analyze.html')
+
+@app.route('/results/<analysis_id>')
+def show_results(analysis_id):
+    """Show analysis results in browser"""
+    # Check if analysis exists
+    if analysis_id not in analysis_results:
+        return redirect(url_for('dashboard'))
+    
+    # Get analysis data
+    data = analysis_results[analysis_id]
+    
+    return render_template('results.html', 
+                          aligned=data['aligned'],
+                          non_aligned=data['non_aligned'],
+                          threshold=data['threshold'],
+                          alignment_percent=data['alignment_percent'],
+                          agenda=data['agenda'],
+                          analysis_id=analysis_id)
+
+@app.route('/download-report/<analysis_id>')
+def download_report(analysis_id):
+    """Download the report as a Word document"""
+    if analysis_id in report_paths and os.path.exists(report_paths[analysis_id]):
+        return send_file(
+            report_paths[analysis_id],
+            as_attachment=True,
+            download_name="alignment_report.docx",
+            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+    return redirect(url_for('dashboard'))
 
 if __name__ == '__main__':
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)

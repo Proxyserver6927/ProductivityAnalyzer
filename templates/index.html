@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Agenda Alignment Analyzer</title>
+    <script>
+        function updateFileAccept() {
+            var inputType = document.getElementById('input_type').value;
+            var fileInput = document.getElementById('file');
+            if (inputType === 'video') {
+                fileInput.accept = 'video/*';
+            } else if (inputType === 'audio') {
+                fileInput.accept = 'audio/*';
+            } else if (inputType === 'text') {
+                fileInput.accept = '.txt,.docx';
+            }
+        }
+    </script>
+</head>
+<body>
+    <h1>Upload File and Agenda</h1>
+    {% if error %}
+        <p style="color: red;">{{ error }}</p>
+    {% endif %}
+    <form method="POST" enctype="multipart/form-data">
+        <label for="input_type">Select Input Type:</label><br>
+        <select id="input_type" name="input_type" onchange="updateFileAccept()">
+            <option value="video">Video</option>
+            <option value="audio">Audio</option>
+            <option value="text">Text</option>
+        </select><br><br>
+        <label for="file">Select File:</label><br>
+        <input type="file" id="file" name="file" required><br><br>
+        <label for="agenda">Enter Agenda Topic:</label><br>
+        <input type="text" id="agenda" name="agenda" required><br><br>
+        <button type="submit">Analyze</button>
+    </form>
+    <script>
+        // Set initial accept
+        updateFileAccept();
+    </script>
+</body>
+</html>
